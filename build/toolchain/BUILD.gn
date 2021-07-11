@@ -1,0 +1,23 @@
+#
+# copied from gn/examples/simple_build/build/toolchain/BUILD.gn
+#
+toolchain("linux_x64") {
+  tool("cxx") {
+    depfile = "{{output}}.d"
+    command = "g++ -MMD -MF $depfile {{defines}} {{include_dirs}} {{cflags}} {{cflags_cc}} -c {{source}} -o {{output}}"
+    depsformat = "gcc"
+    description = "CXX {{output}}"
+    outputs =
+        [ "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.o" ]
+  }
+
+  tool("link") {
+    outfile = "{{target_output_name}}{{output_extension}}"
+    rspfile = "$outfile.rsp"
+    command = "g++ {{ldflags}} -o $outfile -Wl,--start-group @$rspfile {{solibs}} -Wl,--end-group {{libs}}"
+    description = "LINK $outfile"
+    default_output_dir = "{{root_out_dir}}"
+    rspfile_content = "{{inputs}}"
+    outputs = [ outfile ]
+  }
+}
