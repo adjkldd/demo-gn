@@ -1,6 +1,8 @@
 #include <iostream>
+#include "foo2.h"
 
 int main() {
-  std::cout << "hello world" << std::endl;
+  Foo2 foo2;
+  foo2.LogFoo2();
   return 0;
 }

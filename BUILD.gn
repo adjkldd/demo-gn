@@ -1,3 +1,18 @@
+static_library("foo1") {
+  sources = [ "src/foo1.cc", "src/foo1.h" ]
+}
+
+static_library("foo2") {
+  sources = [ "src/foo2.cc", "src/foo2.h" ]
+}
+
+static_library("foo3") {
+  # sources = [ "src/foo3.cc", "src/foo3.h" ]
+  complete_static_lib = true
+  deps = [ ":foo1", ":foo2" ]
+}
+
 executable("hello") {
   sources = [ "src/hello.cc" ]
+  deps = [ ":foo3" ]
 }

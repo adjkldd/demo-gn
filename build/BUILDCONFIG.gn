@@ -1,1 +1,1 @@
-set_default_toolchain("//build/toolchain:linux_x64")
+set_default_toolchain("//build/toolchain:gcc")
