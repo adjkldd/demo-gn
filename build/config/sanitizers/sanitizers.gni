@@ -1,0 +1,150 @@
+# Copyright 2015 The Chromium Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/config/coverage/coverage.gni")
+
+declare_args() {
+  # Compile for Address Sanitizer to find memory bugs.
+  is_asan = false
+
+  # Compile for Leak Sanitizer to find leaks.
+  is_lsan = false
+
+  # Compile for Memory Sanitizer to find uninitialized reads.
+  is_msan = false
+
+  # Compile for Thread Sanitizer to find threading bugs.
+  is_tsan = false
+
+  # Compile for Undefined Behaviour Sanitizer to find various types of
+  # undefined behaviour (excludes vptr checks).
+  is_ubsan = false
+
+  # Halt the program if a problem is detected.
+  is_ubsan_no_recover = false
+
+  # Compile for Undefined Behaviour Sanitizer's null pointer checks.
+  is_ubsan_null = false
+
+  # Track where uninitialized memory originates from. From fastest to slowest:
+  # 0 - no tracking, 1 - track only the initial allocation site, 2 - track the
+  # chain of stores leading from allocation site to use site.
+  msan_track_origins = 2
+
+  # Use dynamic libraries instrumented by one of the sanitizers instead of the
+  # standard system libraries. Set this flag to build the libraries from source.
+  use_locally_built_instrumented_libraries = false
+
+  # Compile with Control Flow Integrity to protect virtual calls and casts.
+  # See http://clang.llvm.org/docs/ControlFlowIntegrity.html
+  # # TODO(pcc): Remove this flag if/when CFI is enabled in all official builds.
+  #
+  # Disable this on linux-chromeos to avoid using ThinLTO there;
+  # crbug.com/1033839. Similarly, don't use this on ARC builds.
+  #
+  # TODO(crbug.com/1159424): Reassess the validity of the next expression.
+  is_cfi = (target_os == "linux" && target_cpu == "x64")
+
+  # Enable checks for indirect function calls via a function pointer.
+  # TODO(pcc): remove this when we're ready to add these checks by default.
+  # https://crbug.com/701919
+  #
+  # TODO(crbug.com/1159424): Reassess the validity of the next expression.
+  use_cfi_icall = (target_os == "linux" && target_cpu == "x64")
+
+  # Print detailed diagnostics when Control Flow Integrity detects a violation.
+  use_cfi_diag = false
+
+  # Let Control Flow Integrity continue execution instead of crashing when
+  # printing diagnostics (use_cfi_diag = true).
+  use_cfi_recover = false
+
+  # Enables core ubsan security features. Will later be removed once it matches
+  # is_ubsan.
+  is_ubsan_security = false
+
+  # Helper variable for testing builds with disabled libfuzzer.
+  # Not for client use.
+  disable_libfuzzer = false
+
+  # Optimize for coverage guided fuzzing (balance between speed and number of
+  # branches). Can be also used to remove non-determinism and other issues.
+  optimize_for_fuzzing = false
+
+  # Value for -fsanitize-coverage flag. Setting this causes
+  # use_sanitizer_coverage to be enabled.
+  # This flag is not used for libFuzzer (use_libfuzzer=true). Instead, we use:
+  #     -fsanitize=fuzzer-no-link
+  # Default value when unset and use_fuzzing_engine=true:
+  #     trace-pc-guard
+  # Default value when unset and use_sanitizer_coverage=true:
+  #     trace-pc-guard,indirect-calls
+  sanitizer_coverage_flags = ""
+
+  # When enabled, only relevant sanitizer defines are set, but compilation
+  # happens with no extra flags. This is useful when in component build
+  # enabling sanitizers only in some of the components.
+  use_sanitizer_configs_without_instrumentation = false
+
+  # When true, seed corpora archives are built.
+  archive_seed_corpus = true
+}
+
+declare_args() {
+  # Enable checks for bad casts: derived cast and unrelated cast.
+  # TODO(krasin): remove this, when we're ready to add these checks by default.
+  # https://crbug.com/626794
+  use_cfi_cast = is_cfi
+
+  # Compile for Undefined Behaviour Sanitizer's vptr checks.
+  is_ubsan_vptr = is_ubsan_security
+}
+
+
+# Args that are in turn dependent on other args must be in a separate
+# declare_args block. User overrides are only applied at the end of a
+# declare_args block.
+declare_args() {
+  use_sanitizer_coverage = !use_clang_coverage && sanitizer_coverage_flags != ""
+}
+
+
+# Whether we are linking against a sanitizer runtime library. Among other
+# things, this changes the default symbol level and other settings in order to
+# prepare to create stack traces "live" using the sanitizer runtime.
+using_sanitizer = is_asan || is_lsan || is_tsan || is_msan ||
+                  is_ubsan || is_ubsan_null || is_ubsan_vptr ||
+                  is_ubsan_security || use_sanitizer_coverage || use_cfi_diag
+
+assert(!using_sanitizer || is_clang,
+       "Sanitizers (is_*san) require setting is_clang = true in 'gn args'")
+
+assert(!is_cfi || is_clang,
+       "is_cfi requires setting is_clang = true in 'gn args'")
+
+# MSan only links Chrome properly in release builds (brettw -- 9/1/2015). The
+# same is possibly true for the other non-ASan sanitizers. But regardless of
+# whether it links, one would normally never run a sanitizer in debug mode.
+# Running in debug mode probably indicates you forgot to set the "is_debug =
+# false" flag in the build args. ASan seems to run fine in debug mode.
+#
+# If you find a use-case where you want to compile a sanitizer in debug mode
+# and have verified it works, ask brettw and we can consider removing it from
+# this condition. We may also be able to find another way to enable your case
+# without having people accidentally get broken builds by compiling an
+# unsupported or unadvisable configurations.
+#
+# For one-off testing, just comment this assertion out.
+assert(!is_debug || !(is_msan || is_ubsan || is_ubsan_null || is_ubsan_vptr),
+       "Sanitizers should generally be used in release (set is_debug=false).")
+
+assert(!is_msan || (is_linux  && current_cpu == "x64"),
+       "MSan currently only works on 64-bit Linux and ChromeOS builds.")
+
+assert(!is_lsan || is_asan, "is_lsan = true requires is_asan = true also.")
+
+# Make sure that if we recover on detection (i.e. not crash), diagnostics are
+# printed.
+assert(!use_cfi_recover || use_cfi_diag,
+       "Only use CFI recovery together with diagnostics.")

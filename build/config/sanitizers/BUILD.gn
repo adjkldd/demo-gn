@@ -1,0 +1,289 @@
+import("//build/config/sanitizers/sanitizers.gni")
+
+group("deps") {
+  if (using_sanitizer) {
+    public_configs = [
+      ":sanitizer_options_link_helper",
+
+      # Even when a target removes default_sanitizer_flags, it may be depending
+      # on a library that did not remove default_sanitizer_flags. Thus, we need
+      # to add the ldflags here as well as in default_sanitizer_flags.
+      ":default_sanitizer_ldflags"
+    ]
+
+    # runtime dependencies
+    # data = [
+    #   "//tools/valgrind/asan/",
+    #   "$clang_base_path/bin/llvm-symbolizer",
+    # ]
+  }
+}
+
+config("sanitizer_options_link_helper") {
+  ldflags = [ "-Wl,-u_sanitizer_options_link_helper" ]
+}
+
+
+config("default_sanitizer_ldflags") {
+  visibility = [
+    ":default_sanitizer_flags",
+    ":deps"
+  ]
+
+  ldflags = []
+  if (is_asan) {
+    ldflags += [ "-fsanitize=address" ]
+  }
+  if (is_lsan) {
+    ldflags += [ "-fsanitize=leak" ]
+  } if (is_tsan) {
+    ldflags += [ "-fsanitize=thread" ]
+  }
+  if (is_msan) {
+    ldflags += [ "-fsanitize=memory" ]
+  }
+  if (is_ubsan || is_ubsan_security) {
+    ldflags += [ "-fsanitize=undefined" ]
+  }
+  if (is_ubsan_null) {
+    ldflags += [ "-fsanitize=null" ]
+  }
+  if (is_ubsan_vptr) {
+    ldflags += [ "-fsanitize=vptr" ]
+  }
+
+  if (use_sanitizer_coverage) {
+    ldflags += [ "-fsanitize-coverage=$sanitizer_coverage_flags" ]
+  }
+}
+
+all_sanitizer_configs = [
+  ":common_sanitizer_flags",
+  ":coverage_flags",
+  ":default_sanitizer_ldflags",
+  ":asan_flags",
+  ":cfi_flags",
+  ":lsan_flags",
+  ":msan_flags",
+  ":tsan_flags",
+  ":ubsan_flags",
+  ":ubsan_no_recover",
+  ":ubsan_null_flags",
+  ":ubsan_security_flags",
+  ":ubsan_vptr_flags"
+]
+
+# This config is applied by default to all targets. It sets the compiler flags
+# for sanitizer usage, or, if no sanitizer is set, does nothing.
+#
+# This needs to be in a separate config so that targets can opt out of
+# sanitizers (by removing the config) if they desire. Even if a target
+# removes this config, executables & shared libraries should still depend on
+# :deps if any of their dependencies have not opted out of sanitizers.
+# Keep this list in sync with default_sanitizer_flags_but_ubsan_vptr.
+config("default_sanitizer_flags") {
+  configs = all_sanitizer_configs
+}
+
+config("cfi_flags") {
+  cflags = []
+  if (is_cfi && current_toolchain == default_toolchain) {
+    if (!defined(cfi_ignorelist_path)) {
+      cfi_ignorelist_path =
+          rebase_path("//tools/cfi/ignores.txt", root_build_dir)
+    }
+    cflags += [
+      "-fsanitize=cfi-vcall",
+      "-fsanitize-ignorelist=$cfi_ignorelist_path",
+    ]
+
+    if (use_cfi_cast) {
+      cflags += [
+        "-fsanitize=cfi-derived-cast",
+        "-fsanitize=cfi-unrelated-cast",
+      ]
+    }
+
+    if (use_cfi_icall) {
+      cflags += [ "-fsanitize=cfi-icall" ]
+    }
+
+    if (use_cfi_diag) {
+      cflags += [ "-fno-sanitize-trap=cfi" ]
+      if (is_win) {
+        cflags += [
+          "/Oy-",
+          "/Ob0",
+        ]
+      } else {
+        cflags += [
+          "-fno-inline-functions",
+          "-fno-inline",
+          "-fno-omit-frame-pointer",
+          "-O1",
+        ]
+      }
+      if (use_cfi_recover) {
+        cflags += [ "-fsanitize-recover=cfi" ]
+      }
+    }
+  }
+}
+
+config("asan_flags") {
+  cflags = []
+  if (is_asan) {
+    cflags += [ "-fsanitize=address" ]
+  }
+}
+
+config("coverage_flags") {
+  cflags = []
+  if (use_sanitizer_coverage) {
+    # Used by sandboxing code to allow coverage dump to be written on the disk.
+    defines = [ "SANITIZER_COVERAGE" ]
+    cflags += [
+      "-fsanitize-coverage=$sanitizer_coverage_flags",
+      "-mllvm",
+      "-sanitizer-coverage-prune-blocks=1",
+    ]
+  }
+}
+
+config("common_sanitizer_flags") {
+  cflags = []
+
+  if (using_sanitizer) {
+    assert(is_clang, "sanitizers only supported with clang")
+
+    # Allow non-default toolchains to enable sanitizers in toolchain_args even
+    # in official builds.
+    assert(current_toolchain != default_toolchain || !is_official_build,
+           "sanitizers not supported in official builds")
+
+    cflags += [
+      # Column info in debug data confuses Visual Studio's debugger, so don't
+      # use this by default.  However, clusterfuzz needs it for good
+      # attribution of reports to CLs, so turn it on there.
+      "-gcolumn-info",
+    ]
+
+    # Frame pointers are controlled in //build/config/compiler:default_stack_frames
+  }
+}
+
+config("lsan_flags") {
+  if (is_lsan) {
+    cflags = [ "-fsanitize=leak" ]
+  }
+}
+
+config("msan_flags") {
+  if (is_msan) {
+    assert(is_linux || is_chromeos,
+           "msan only supported on linux x86_64/ChromeOS")
+    if (!defined(msan_ignorelist_path)) {
+      msan_ignorelist_path =
+          rebase_path("//tools/msan/ignorelist.txt", root_build_dir)
+    }
+    cflags = [
+      "-fsanitize=memory",
+      "-fsanitize-memory-track-origins=$msan_track_origins",
+      "-fsanitize-ignorelist=$msan_ignorelist_path",
+    ]
+  }
+}
+
+config("tsan_flags") {
+  if (is_tsan) {
+    assert(is_linux, "tsan only supported on linux x86_64")
+    if (!defined(tsan_ignorelist_path)) {
+      tsan_ignorelist_path =
+          rebase_path("//tools/memory/tsan_v2/ignores.txt", root_build_dir)
+    }
+    cflags = [
+      "-fsanitize=thread",
+      "-fsanitize-ignorelist=$tsan_ignorelist_path",
+    ]
+  }
+}
+
+config("ubsan_flags") {
+  cflags = []
+  if (is_ubsan) {
+    if (!defined(ubsan_ignorelist_path)) {
+      ubsan_ignorelist_path =
+          rebase_path("//tools/ubsan/ignorelist.txt", root_build_dir)
+    }
+    cflags += [
+      "-fsanitize=bool",
+      "-fsanitize=bounds",
+      "-fsanitize=builtin",
+      "-fsanitize=float-divide-by-zero",
+      "-fsanitize=integer-divide-by-zero",
+      "-fsanitize=null",
+      "-fsanitize=object-size",
+      "-fsanitize=return",
+      "-fsanitize=returns-nonnull-attribute",
+      "-fsanitize=shift-exponent",
+      "-fsanitize=signed-integer-overflow",
+      "-fsanitize=unreachable",
+      "-fsanitize=vla-bound",
+      "-fsanitize-ignorelist=$ubsan_ignorelist_path",
+    ]
+
+    cflags += [
+      # Employ the experimental PBQP register allocator to avoid slow
+      # compilation on files with too many basic blocks.
+      # See http://crbug.com/426271.
+      "-mllvm",
+      "-regalloc=pbqp",
+
+      # Speculatively use coalescing to slightly improve the code generated
+      # by PBQP regallocator. May increase compile time.
+      "-mllvm",
+      "-pbqp-coalescing",
+    ]
+  }
+}
+
+config("ubsan_no_recover") {
+  if (is_ubsan_no_recover) {
+    cflags = [ "-fno-sanitize-recover=undefined" ]
+  }
+}
+
+config("ubsan_security_flags") {
+  if (is_ubsan_security) {
+    if (!defined(ubsan_security_ignorelist_path)) {
+      ubsan_security_ignorelist_path =
+          rebase_path("//tools/ubsan/security_ignorelist.txt", root_build_dir)
+    }
+    cflags = [
+      "-fsanitize=function",
+      "-fsanitize=shift",
+      "-fsanitize=signed-integer-overflow",
+      "-fsanitize=vla-bound",
+      "-fsanitize-ignorelist=$ubsan_security_ignorelist_path",
+    ]
+  }
+}
+
+config("ubsan_null_flags") {
+  if (is_ubsan_null) {
+    cflags = [ "-fsanitize=null" ]
+  }
+}
+
+config("ubsan_vptr_flags") {
+  if (is_ubsan_vptr) {
+    if (!defined(ubsan_vptr_ignorelist_path)) {
+      ubsan_vptr_ignorelist_path =
+          rebase_path("//tools/ubsan/vptr_ignorelist.txt", root_build_dir)
+    }
+    cflags = [
+      "-fsanitize=vptr",
+      "-fsanitize-ignorelist=$ubsan_vptr_ignorelist_path",
+    ]
+  }
+}
